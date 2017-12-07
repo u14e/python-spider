@@ -1,60 +1,106 @@
 #!/usr/bin/env python3
 # _*_ coding:utf-8 _*_
 
-from urllib import request, error, parse
+from urllib import request, error, parse, robotparser
 import re
 import json
 import itertools
+import datetime
+import time
 
 
-def download(url, user_agent=None, num_retries=2):
-    if user_agent is None:
-        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
-                            AppleWebKit/537.36 (KHTML, like Gecko) \
-                            Chrome/58.0.3029.110 Safari/537.36'
+def download(url, headers, proxy, num_retries, data=None):
     print('开始下载......', url)
-    headers = {
-        'User-Agent': user_agent
-    }
-    req = request.Request(url, headers=headers)
+    req = request.Request(url, headers=headers, data=data)
     try:
-        html = request.urlopen(req).read()
+        # 代理
+        if proxy:
+            proxy_params = {
+                parse.urlparse(url).scheme: proxy  # 类似'http': '192.168.0.0'
+            }
+            proxy_handler = request.ProxyHandler(proxy_params)
+            opener = request.build_opener(proxy_handler)
+            request.install_opener(opener)
+            html = opener.open(req).read()
+        else:
+            html = request.urlopen(req).read()
         html = html.decode('utf-8')
     except error.URLError as e:
-        print('Error:', e.reason)
+        print('下载出错:', e.reason)
         html = None
         # 当遇到5XX错误时，重试下载，默认重试2次
         if num_retries > 0:
             if hasattr(e, 'code') and 500 <= e.code < 600:
-                return download(url, user_agent, num_retries - 1)
+                return download(url, headers, num_retries - 1, data)
     return html
 
 
-def link_crawler(seed_url, link_regex):
+class Throttle:
+    """
+    在同一domain下，添加相邻两次请求的延迟
+    """
+
+    def __init__(self, delay):
+        self.delay = delay
+        self.domains = {}
+
+    def wait(self, url):
+        domain = parse.urlparse(url).netloc
+        last_accessed = self.domains.get(domain)
+        if self.delay > 0 and last_accessed is not None:
+            sleep_secs = self.delay - (datetime.datetime.now() - last_accessed).seconds
+            if sleep_secs > 0:
+                print('will wait %ds' % sleep_secs)
+                time.sleep(sleep_secs)
+        self.domains[domain] = datetime.datetime.now()
+
+
+def link_crawler(seed_url, link_regex=None, delay=5, proxy=None, headers=None, user_agent='wswp', num_retries=2):
     """
     只爬取所有国家的链接
     形如'http://example.webscraping.com/places/default/view/Zimbabwe-252'之类
     保存在chapter_1.json
     :param seed_url:
     :param link_regex:
+    :param delay:
+    :param proxy:
+    :param headers:
+    :param user_agent:
+    :param num_retries:
     :return:
     """
+    rp = get_robots(seed_url)
+    throttle = Throttle(delay)
+
+    headers = headers or {}
+    if user_agent:
+        headers['User-Agent'] = user_agent
+
     crawl_queue = [seed_url]
     seen = set(crawl_queue)
+
     while crawl_queue:
+        # 没有index索引页时代表爬虫结束
         m = re.match(r'.*?/index/(\d+)$', crawl_queue[-1])
         if not m and crawl_queue[-1] != seed_url:
             print('爬虫结束......')
             save_as_json(crawl_queue)
             break
+
         url = crawl_queue.pop()
-        html = download(url)
-        for link in get_links(html):
-            if re.match(link_regex, link):
-                link = parse.urljoin(seed_url, link)
-                if link not in seen:
-                    seen.add(link)
-                    crawl_queue.append(link)
+        # 检查robots.txt禁止爬虫的url
+        if rp.can_fetch(user_agent_main, url):
+            throttle.wait(url)
+            html = download(url, headers, proxy, num_retries)
+            for link in get_links(html):
+                if re.match(link_regex, link):
+                    link = parse.urljoin(seed_url, link)
+                    if link not in seen:
+                        seen.add(link)
+                        if same_domain(seed_url, link):
+                            crawl_queue.append(link)
+        else:
+            print('Blocked by robots.txt:', url)
 
 
 def get_links(html):
@@ -67,6 +113,28 @@ def get_links(html):
     return webpage_regex.findall(html)
 
 
+def get_robots(url):
+    """
+    为该链接初始化robots
+    :param url:
+    :return:
+    """
+    rp = robotparser.RobotFileParser()
+    rp.set_url(parse.urljoin(url, '/robots.txt'))
+    rp.read()
+    return rp
+
+
+def same_domain(url1, url2):
+    """
+    判断两个url是否属于同一域名下
+    :param url1:
+    :param url2:
+    :return:
+    """
+    return parse.urlparse(url1).netloc == parse.urlparse(url2).netloc
+
+
 def save_as_json(data):
     with open('chapter_1.json', 'wt', encoding='utf-8') as fout:
         # 需要指定ensure_ascii为False，否则对于non-ASCII characters全部转义
@@ -77,7 +145,10 @@ def save_as_json(data):
 if __name__ == '__main__':
     # download('http://httpstat.us/500')
     # download('https://www.meetup.com/')
-    link_crawler('http://example.webscraping.com', '/places/default/(index|view)')
+    user_agent_main = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+                                AppleWebKit/537.36 (KHTML, like Gecko) \
+                                Chrome/58.0.3029.110 Safari/537.36'
+    link_crawler('http://example.webscraping.com', '/places/default/(index|view)', user_agent=user_agent_main, delay=2)
 
 
 def crawl_sitemap(url):
