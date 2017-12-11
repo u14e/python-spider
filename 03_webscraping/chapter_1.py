@@ -31,7 +31,7 @@ def download(url, headers, proxy, num_retries, data=None):
         # 当遇到5XX错误时，重试下载，默认重试2次
         if num_retries > 0:
             if hasattr(e, 'code') and 500 <= e.code < 600:
-                return download(url, headers, num_retries - 1, data)
+                return download(url, headers, proxy, num_retries - 1, data)
     return html
 
 
@@ -55,7 +55,7 @@ class Throttle:
         self.domains[domain] = datetime.datetime.now()
 
 
-def link_crawler(seed_url, link_regex=None, delay=5, proxy=None, headers=None, user_agent='wswp', num_retries=2):
+def link_crawler(seed_url, link_regex=None, delay=0, proxy=None, headers=None, user_agent='wswp', num_retries=2):
     """
     只爬取所有国家的链接
     形如'http://example.webscraping.com/places/default/view/Zimbabwe-252'之类
@@ -89,7 +89,7 @@ def link_crawler(seed_url, link_regex=None, delay=5, proxy=None, headers=None, u
 
         url = crawl_queue.pop()
         # 检查robots.txt禁止爬虫的url
-        if rp.can_fetch(user_agent_main, url):
+        if rp.can_fetch(headers['User-Agent'], url):
             throttle.wait(url)
             html = download(url, headers, proxy, num_retries)
             for link in get_links(html):
@@ -148,7 +148,7 @@ if __name__ == '__main__':
     user_agent_main = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
                                 AppleWebKit/537.36 (KHTML, like Gecko) \
                                 Chrome/58.0.3029.110 Safari/537.36'
-    link_crawler('http://example.webscraping.com', '/places/default/(index|view)', user_agent=user_agent_main, delay=2)
+    link_crawler('http://example.webscraping.com', '/places/default/(index|view)', user_agent=user_agent_main)
 
 
 def crawl_sitemap(url):
