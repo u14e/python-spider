@@ -5,7 +5,6 @@ import requests
 from urllib import parse
 import os
 import re
-from pprint import pprint
 from bs4 import BeautifulSoup
 
 

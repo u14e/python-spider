@@ -3,3 +3,4 @@ venv/
 .vscode/
 __pycache__/
 04_淘宝MM照片/**/
+images/
